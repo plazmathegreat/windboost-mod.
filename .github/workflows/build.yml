@@ -172,7 +172,7 @@ jobs:
                           }
 
                           if (world instanceof ServerWorld serverWorld) {
-                              player.velocityModified = true;
+                              if (player instanceof net.minecraft.server.network.ServerPlayerEntity sp) { sp.networkHandler.sendPacket(new net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket(sp)); }
                               serverWorld.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.ENTITY_WIND_CHARGE_WIND_BURST.value(), SoundCategory.PLAYERS, 1.0F, 1.0F);
                               serverWorld.spawnParticles(ParticleTypes.GUST_EMITTER_SMALL, player.getX(), player.getY(), player.getZ(), 1, 0.0, 0.0, 0.0, 0.0);
                               if (cooldownTicks > 0) {
