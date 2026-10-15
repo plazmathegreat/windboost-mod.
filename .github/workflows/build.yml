@@ -1,4 +1,4 @@
-name: Build WindBoost Mod
+name: Build WindBoost Mod (1.21.11)
 
 on:
   push:
@@ -18,9 +18,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '8.8'
+          gradle-version: '8.12'
 
-      - name: Generate Project Files & Code
+      - name: Generate Project Files & Code (1.21.11)
         run: |
           mkdir -p src/main/java/com/example/windboost
           mkdir -p src/main/resources/assets/windboost/lang
@@ -42,20 +42,20 @@ jobs:
           cat << 'EOF' > gradle.properties
           org.gradle.jvmargs=-Xmx2G
           org.gradle.parallel=true
-          minecraft_version=1.21
-          yarn_mappings=1.21+build.9
-          loader_version=0.16.0
-          mod_version=1.0.0
+          minecraft_version=1.21.11
+          yarn_mappings=1.21.11+build.6
+          loader_version=0.18.4
+          mod_version=1.0.0+1.21.11
           maven_group=com.example
           archives_base_name=windboost
-          fabric_version=0.100.8+1.21
-          cloth_config_version=15.0.140
-          modmenu_version=11.0.3
+          fabric_version=0.141.3+1.21.11
+          cloth_config_version=21.11.153
+          modmenu_version=17.0.0-beta.1
           EOF
 
           cat << 'EOF' > build.gradle
           plugins {
-              id 'fabric-loom' version '1.7-SNAPSHOT'
+              id 'fabric-loom' version '1.10-SNAPSHOT'
               id 'maven-publish'
           }
           version = project.mod_version
@@ -132,7 +132,7 @@ jobs:
           import net.minecraft.sound.SoundCategory;
           import net.minecraft.sound.SoundEvents;
           import net.minecraft.stat.Stats;
-          import net.minecraft.util.TypedActionResult;
+          import net.minecraft.util.ActionResult;
           import net.minecraft.util.math.Vec3d;
 
           public class WindBoostMod implements ModInitializer {
@@ -146,9 +146,10 @@ jobs:
 
                   UseItemCallback.EVENT.register((player, world, hand) -> {
                       ItemStack stack = player.getStackInHand(hand);
-                      if (stack.isOf(Items.WIND_CHARGE) && player.isFallFlying()) {
-                          if (player.getItemCooldownManager().isCoolingDown(Items.WIND_CHARGE)) {
-                              return TypedActionResult.fail(stack);
+                      // In 1.21.11, isFallFlying() is now isGliding() and isCoolingDown takes ItemStack
+                      if (stack.isOf(Items.WIND_CHARGE) && player.isGliding()) {
+                          if (player.getItemCooldownManager().isCoolingDown(stack)) {
+                              return ActionResult.FAIL;
                           }
                           double boostStrength = CONFIG.boostStrength;
                           double retention = CONFIG.momentumRetention;
@@ -165,9 +166,9 @@ jobs:
                           );
 
                           if (world.isClient()) {
-                              world.addParticle(ParticleTypes.GUST_EMITTER_SMALL, player.getX(), player.getY(), player.getZ(), 0.0, 0.0, 0.0);
+                              world.addParticleClient(ParticleTypes.GUST_EMITTER_SMALL, player.getX(), player.getY(), player.getZ(), 0.0, 0.0, 0.0);
                               world.playSound(player, player.getX(), player.getY(), player.getZ(), SoundEvents.ENTITY_WIND_CHARGE_WIND_BURST.value(), SoundCategory.PLAYERS, 1.0F, 1.0F);
-                              return TypedActionResult.pass(stack);
+                              return ActionResult.PASS;
                           }
 
                           if (world instanceof ServerWorld serverWorld) {
@@ -175,16 +176,16 @@ jobs:
                               serverWorld.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.ENTITY_WIND_CHARGE_WIND_BURST.value(), SoundCategory.PLAYERS, 1.0F, 1.0F);
                               serverWorld.spawnParticles(ParticleTypes.GUST_EMITTER_SMALL, player.getX(), player.getY(), player.getZ(), 1, 0.0, 0.0, 0.0, 0.0);
                               if (cooldownTicks > 0) {
-                                  player.getItemCooldownManager().set(Items.WIND_CHARGE, cooldownTicks);
+                                  player.getItemCooldownManager().set(stack, cooldownTicks);
                               }
                               player.incrementStat(Stats.USED.getOrCreateStat(Items.WIND_CHARGE));
                               if (!player.getAbilities().creativeMode) {
                                   stack.decrement(1);
                               }
-                              return TypedActionResult.success(stack, false);
+                              return ActionResult.SUCCESS;
                           }
                       }
-                      return TypedActionResult.pass(stack);
+                      return ActionResult.PASS;
                   });
               }
           }
@@ -205,8 +206,8 @@ jobs:
               "modmenu": ["com.example.windboost.ModMenuIntegration"]
             },
             "depends": {
-              "fabricloader": ">=0.15.11",
-              "minecraft": "~1.21",
+              "fabricloader": ">=0.16.0",
+              "minecraft": ">=1.21.2 <=1.21.11",
               "java": ">=21",
               "fabric-api": "*"
             }
@@ -231,6 +232,6 @@ jobs:
       - name: Upload Compiled Mod JAR
         uses: actions/upload-artifact@v4
         with:
-          name: windboost-mod-jar
+          name: windboost-mod-1.21.11-jar
           path: |
-            build/libs/windboost-1.0.0.jar
+            build/libs/windboost-1.0.0+1.21.11.jar
