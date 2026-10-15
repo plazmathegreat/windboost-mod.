@@ -1,0 +1,235 @@
+name: Build WindBoost Mod
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.8'
+
+      - name: Generate Project Files & Code
+        run: |
+          mkdir -p src/main/java/com/example/windboost
+          mkdir -p src/main/resources/assets/windboost/lang
+
+          cat << 'EOF' > settings.gradle
+          pluginManagement {
+              repositories {
+                  maven {
+                      name = 'Fabric'
+                      url = 'https://maven.fabricmc.net/'
+                  }
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          EOF
+
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx2G
+          org.gradle.parallel=true
+          minecraft_version=1.21
+          yarn_mappings=1.21+build.9
+          loader_version=0.16.0
+          mod_version=1.0.0
+          maven_group=com.example
+          archives_base_name=windboost
+          fabric_version=0.100.8+1.21
+          cloth_config_version=15.0.140
+          modmenu_version=11.0.3
+          EOF
+
+          cat << 'EOF' > build.gradle
+          plugins {
+              id 'fabric-loom' version '1.7-SNAPSHOT'
+              id 'maven-publish'
+          }
+          version = project.mod_version
+          group = project.maven_group
+          base { archivesName = project.archives_base_name }
+          repositories {
+              maven { url "https://maven.shedaniel.me/" }
+              maven { url "https://maven.terraformersmc.com/releases/" }
+          }
+          dependencies {
+              minecraft "com.mojang:minecraft:${project.minecraft_version}"
+              mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+              modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+              modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+              modApi("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+                  exclude(group: "net.fabricmc.fabric-api")
+              }
+              include "me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}"
+              modImplementation "com.terraformersmc:modmenu:${project.modmenu_version}"
+          }
+          tasks.withType(JavaCompile).configureEach { it.options.release = 21 }
+          java {
+              withSourcesJar()
+              sourceCompatibility = JavaVersion.VERSION_21
+              targetCompatibility = JavaVersion.VERSION_21
+          }
+          EOF
+
+          cat << 'EOF' > src/main/java/com/example/windboost/ModConfig.java
+          package com.example.windboost;
+          import me.shedaniel.autoconfig.ConfigData;
+          import me.shedaniel.autoconfig.annotation.Config;
+          import me.shedaniel.autoconfig.annotation.ConfigEntry;
+
+          @Config(name = WindBoostMod.MOD_ID)
+          public class ModConfig implements ConfigData {
+              @ConfigEntry.Gui.Tooltip
+              public double boostStrength = 1.2;
+              @ConfigEntry.Gui.Tooltip
+              @ConfigEntry.BoundedDiscrete(min = 0, max = 100)
+              public int cooldownTicks = 10;
+              @ConfigEntry.Gui.Tooltip
+              public double momentumRetention = 0.5;
+          }
+          EOF
+
+          cat << 'EOF' > src/main/java/com/example/windboost/ModMenuIntegration.java
+          package com.example.windboost;
+          import com.terraformersmc.modmenu.api.ConfigScreenFactory;
+          import com.terraformersmc.modmenu.api.ModMenuApi;
+          import me.shedaniel.autoconfig.AutoConfig;
+          import net.fabricmc.api.EnvType;
+          import net.fabricmc.api.Environment;
+
+          @Environment(EnvType.CLIENT)
+          public class ModMenuIntegration implements ModMenuApi {
+              @Override
+              public ConfigScreenFactory<?> getModConfigScreenFactory() {
+                  return parent -> AutoConfig.getConfigScreen(ModConfig.class, parent).get();
+              }
+          }
+          EOF
+
+          cat << 'EOF' > src/main/java/com/example/windboost/WindBoostMod.java
+          package com.example.windboost;
+          import me.shedaniel.autoconfig.AutoConfig;
+          import me.shedaniel.autoconfig.serializer.GsonConfigSerializer;
+          import net.fabricmc.api.ModInitializer;
+          import net.fabricmc.fabric.api.event.player.UseItemCallback;
+          import net.minecraft.item.ItemStack;
+          import net.minecraft.item.Items;
+          import net.minecraft.particle.ParticleTypes;
+          import net.minecraft.server.world.ServerWorld;
+          import net.minecraft.sound.SoundCategory;
+          import net.minecraft.sound.SoundEvents;
+          import net.minecraft.stat.Stats;
+          import net.minecraft.util.TypedActionResult;
+          import net.minecraft.util.math.Vec3d;
+
+          public class WindBoostMod implements ModInitializer {
+              public static final String MOD_ID = "windboost";
+              public static ModConfig CONFIG;
+
+              @Override
+              public void onInitialize() {
+                  AutoConfig.register(ModConfig.class, GsonConfigSerializer::new);
+                  CONFIG = AutoConfig.getConfigHolder(ModConfig.class).getConfig();
+
+                  UseItemCallback.EVENT.register((player, world, hand) -> {
+                      ItemStack stack = player.getStackInHand(hand);
+                      if (stack.isOf(Items.WIND_CHARGE) && player.isFallFlying()) {
+                          if (player.getItemCooldownManager().isCoolingDown(Items.WIND_CHARGE)) {
+                              return TypedActionResult.fail(stack);
+                          }
+                          double boostStrength = CONFIG.boostStrength;
+                          double retention = CONFIG.momentumRetention;
+                          int cooldownTicks = CONFIG.cooldownTicks;
+
+                          Vec3d lookDir = player.getRotationVector();
+                          Vec3d currentVel = player.getVelocity();
+                          player.setVelocity(
+                              currentVel.multiply(retention).add(
+                                  lookDir.x * boostStrength,
+                                  lookDir.y * boostStrength,
+                                  lookDir.z * boostStrength
+                              )
+                          );
+
+                          if (world.isClient()) {
+                              world.addParticle(ParticleTypes.GUST_EMITTER_SMALL, player.getX(), player.getY(), player.getZ(), 0.0, 0.0, 0.0);
+                              world.playSound(player, player.getX(), player.getY(), player.getZ(), SoundEvents.ENTITY_WIND_CHARGE_WIND_BURST.value(), SoundCategory.PLAYERS, 1.0F, 1.0F);
+                              return TypedActionResult.pass(stack);
+                          }
+
+                          if (world instanceof ServerWorld serverWorld) {
+                              player.velocityModified = true;
+                              serverWorld.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.ENTITY_WIND_CHARGE_WIND_BURST.value(), SoundCategory.PLAYERS, 1.0F, 1.0F);
+                              serverWorld.spawnParticles(ParticleTypes.GUST_EMITTER_SMALL, player.getX(), player.getY(), player.getZ(), 1, 0.0, 0.0, 0.0, 0.0);
+                              if (cooldownTicks > 0) {
+                                  player.getItemCooldownManager().set(Items.WIND_CHARGE, cooldownTicks);
+                              }
+                              player.incrementStat(Stats.USED.getOrCreateStat(Items.WIND_CHARGE));
+                              if (!player.getAbilities().creativeMode) {
+                                  stack.decrement(1);
+                              }
+                              return TypedActionResult.success(stack, false);
+                          }
+                      }
+                      return TypedActionResult.pass(stack);
+                  });
+              }
+          }
+          EOF
+
+          cat << 'EOF' > src/main/resources/fabric.mod.json
+          {
+            "schemaVersion": 1,
+            "id": "windboost",
+            "version": "1.0.0",
+            "name": "Elytra Wind Boost",
+            "description": "Allows players to boost their Elytra flight using Wind Charges.",
+            "authors": ["You"],
+            "license": "MIT",
+            "environment": "*",
+            "entrypoints": {
+              "main": ["com.example.windboost.WindBoostMod"],
+              "modmenu": ["com.example.windboost.ModMenuIntegration"]
+            },
+            "depends": {
+              "fabricloader": ">=0.15.11",
+              "minecraft": "~1.21",
+              "java": ">=21",
+              "fabric-api": "*"
+            }
+          }
+          EOF
+
+          cat << 'EOF' > src/main/resources/assets/windboost/lang/en_us.json
+          {
+            "text.autoconfig.windboost.title": "Elytra Wind Boost Settings",
+            "text.autoconfig.windboost.option.boostStrength": "Boost Strength",
+            "text.autoconfig.windboost.option.boostStrength.@Tooltip": "Multiplier for directional burst velocity (Default: 1.2)",
+            "text.autoconfig.windboost.option.cooldownTicks": "Cooldown (Ticks)",
+            "text.autoconfig.windboost.option.cooldownTicks.@Tooltip": "Delay between boosts in ticks (Default: 10)",
+            "text.autoconfig.windboost.option.momentumRetention": "Momentum Retention",
+            "text.autoconfig.windboost.option.momentumRetention.@Tooltip": "How much existing speed is kept before boosting (Default: 0.5)"
+          }
+          EOF
+
+      - name: Compile Mod JAR
+        run: gradle build --no-daemon
+
+      - name: Upload Compiled Mod JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: windboost-mod-jar
+          path: |
+            build/libs/windboost-1.0.0.jar
