@@ -36,6 +36,7 @@ jobs:
                   gradlePluginPortal()
               }
           }
+          rootProject.name = 'windboost'
           EOF
 
           cat << 'EOF' > gradle.properties
